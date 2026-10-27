@@ -75,8 +75,6 @@
 <script>
 /* ---------- Settings ---------- */
 var UNIT = "celsius";            // "celsius" or "fahrenheit"
-var HOUR_HAND_24 = true;         // true: hour hand makes 1 turn per day and points at the 24h labels
-                                 // false: classic 12-hour hour hand
 var RAIN_MIN = 30;               // show "Rain n% at hh" when today's peak chance is at least this %
 var REFRESH_MS = 10 * 60 * 1000; // weather + location refresh: every 10 minutes
 
@@ -168,7 +166,7 @@ function clear(g) { while (g.firstChild) g.removeChild(g.firstChild); }
 var FONT = "-apple-system, 'SF Pro Display', 'Helvetica Neue', Arial, sans-serif";
 
 /* Dial geometry (viewBox 200 x 200).  12h at top, 24h at bottom, 06h left, 18h right. */
-var R_DISC = 89, R_LAB = 77, R_ORB = 58;
+var R_DISC = 89, R_NUM = 72, R_ORB = 56;
 function pt(h, r) {
   var a = (h - 12) * 15 * RAD;
   return [100 + r * Math.sin(a), 100 - r * Math.cos(a)];
@@ -190,17 +188,13 @@ var sTop = el("stop", { offset: "0" },    skyG);
 var sMid = el("stop", { offset: "0.55" }, skyG);
 var sHor = el("stop", { offset: "1" },    skyG);
 
-// outer tick marks: 60 minute ticks + 24 hour ticks (aligned with the 24h labels)
+// classic watch ticks: 12 white hour ticks, 48 grey minute ticks
 var ticksG = el("g", {});
-for (var m = 0; m < 60; m++) {
-  el("line", { x1: 100, y1: 100 - 97.5, x2: 100, y2: 100 - 94.5, stroke: "#9fb4ff", "stroke-opacity": 0.45,
-               "stroke-width": 0.9, transform: "rotate(" + (m * 6) + " 100 100)" }, ticksG);
-}
-for (var q = 0; q < 24; q++) {
-  var quarter = q % 6 === 0;
-  el("line", { x1: 100, y1: 100 - 98, x2: 100, y2: 100 - (quarter ? 90 : 91.5),
-               stroke: quarter ? "#fff" : "#c9dcff", "stroke-opacity": quarter ? 1 : 0.9,
-               "stroke-width": quarter ? 2.4 : 1.7, transform: "rotate(" + (q * 15) + " 100 100)" }, ticksG);
+for (var tk = 0; tk < 60; tk++) {
+  var hourTick = tk % 5 === 0;
+  el("line", { x1: 100, y1: 100 - 98, x2: 100, y2: 100 - (hourTick ? 90 : 93),
+               stroke: hourTick ? "#fff" : "#8e8e93", "stroke-width": hourTick ? 2.6 : 2.1,
+               transform: "rotate(" + (tk * 6) + " 100 100)" }, ticksG);
 }
 
 var clipG   = el("g", { "clip-path": "url(#clipDisc)" });
@@ -208,28 +202,24 @@ var skyRect = el("rect", { x: 0, y: 0, width: 200, height: 200, fill: "url(#skyG
 var starsG  = el("g", {}, clipG);
 var wedgesG = el("g", {}, clipG);                 // twilight/night pies, centre to rim
 
-// hour labels + odd-hour dots
-var labG = el("g", {});
-for (var hh = 0; hh < 24; hh++) {
-  var p = pt(hh, R_LAB);
-  if (hh % 2 === 0) {
-    var lab = hh === 0 ? 24 : hh;
-    var t = el("text", {
-      x: f(p[0]), y: f(p[1] + 0.3), fill: "#d6e4ff", "fill-opacity": 0.9,
-      "font-size": 8.6, "font-weight": 600, "text-anchor": "middle",
-      "dominant-baseline": "central", "font-family": FONT
-    }, labG);
-    t.textContent = (lab < 10 ? "0" : "") + lab;
-  } else {
-    el("circle", { cx: f(p[0]), cy: f(p[1]), r: 0.9, fill: "#d6e4ff", "fill-opacity": 0.55 }, labG);
-  }
-}
-
 // sun orbit + sun marker
 el("circle", { cx: 100, cy: 100, r: R_ORB, fill: "none", stroke: "#fff", "stroke-opacity": 0.45, "stroke-width": 0.8 });
 var orbDots = el("g", {});
 var sunGlow = el("circle", { r: 15, fill: "url(#sunG)" });
 var sunMark = el("circle", { r: 3.2, fill: "#fffbe0" });
+
+// classic 1-12 numerals (drawn above the sun layer)
+var labG = el("g", {});
+for (var n = 1; n <= 12; n++) {
+  var na = n * 30 * RAD;
+  var tx = el("text", {
+    x: f(100 + R_NUM * Math.sin(na)), y: f(100 - R_NUM * Math.cos(na) + 0.6),
+    fill: "#fff", "fill-opacity": 0.8,
+    "font-size": 19, "font-weight": 400, "text-anchor": "middle",
+    "dominant-baseline": "central", "font-family": FONT
+  }, labG);
+  tx.textContent = n;
+}
 
 // clock hands
 function makeHand(len, tail, w, color, shadow) {
@@ -240,17 +230,18 @@ function makeHand(len, tail, w, color, shadow) {
                "stroke-width": w, "stroke-linecap": "round" }, g);
   return g;
 }
-var hourHand = makeHand(46, 8, 5.2, "#fff", 0.28);
-var minHand  = makeHand(70, 8, 4,   "#fff", 0.28);
-var secHand  = makeHand(85, 16, 1.3, "#ff9f0a", 0.2);
-el("circle", { cx: 100, cy: 100, r: 3.4, fill: "#000", stroke: "#ff9f0a", "stroke-width": 2 });
+var hourHand = makeHand(54, 10, 6.6, "#fff", 0.35);
+var minHand  = makeHand(86, 10, 5.4, "#fff", 0.35);
+var secHand  = makeHand(90, 18, 1.4, "#ff9f0a", 0.25);
+el("circle", { cx: 100, cy: 100, r: 6, fill: "#fff" });
+el("circle", { cx: 100, cy: 100, r: 3.2, fill: "#000", stroke: "#ff9f0a", "stroke-width": 1.8 });
 
 function animateHands() {
   var d = new Date(Date.now() + tzOffMs);
   var s = d.getUTCSeconds() + d.getUTCMilliseconds() / 1000;
   var mi = d.getUTCMinutes() + s / 60;
   var h = d.getUTCHours() + mi / 60;
-  var ha = HOUR_HAND_24 ? h * 15 : (h % 12) * 30;
+  var ha = (h % 12) * 30;
   hourHand.setAttribute("transform", "rotate(" + f(ha) + " 100 100)");
   minHand.setAttribute("transform", "rotate(" + f(mi * 6) + " 100 100)");
   secHand.setAttribute("transform", "rotate(" + f(s * 6) + " 100 100)");
