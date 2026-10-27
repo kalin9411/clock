@@ -88,10 +88,46 @@ window.addEventListener("orientationchange", function () { setTimeout(fit, 200);
 
 /* ---------- Location state (cached; rough guess until GPS answers) ---------- */
 var loc = { lat: 45, lon: -new Date().getTimezoneOffset() / 60 * 15 }; // rough guess from timezone
+var deviceTz = "";
+try { deviceTz = Intl.DateTimeFormat().resolvedOptions().timeZone || ""; } catch (e) {}
+var tz = deviceTz;               // IANA timezone of the LOCATION (updated from the weather response)
 try {
   var cached = JSON.parse(localStorage.getItem("astro_loc") || "null");
-  if (cached && cached.length === 2) loc = { lat: cached[0], lon: cached[1] };
+  if (cached && cached.length >= 2) {
+    loc = { lat: cached[0], lon: cached[1] };
+    if (cached[2]) tz = cached[2];
+  }
 } catch (e) {}
+function saveLoc() {
+  try { localStorage.setItem("astro_loc", JSON.stringify([loc.lat, loc.lon, tz])); } catch (e) {}
+}
+
+/* ---------- Time at the location (handles daylight saving automatically) ---------- */
+var tzFmt = null, tzOffMs = -new Date().getTimezoneOffset() * 60000;
+function makeFmt() {
+  try {
+    tzFmt = new Intl.DateTimeFormat("en-US", { timeZone: tz, hour12: false, year: "numeric", month: "numeric",
+                                               day: "numeric", hour: "numeric", minute: "numeric", second: "numeric" });
+  } catch (e) { tzFmt = null; tz = deviceTz; }
+}
+makeFmt();
+function setTz(name) {           // returns true if the timezone changed
+  if (!name || name === tz) return false;
+  tz = name; makeFmt(); saveLoc();
+  return true;
+}
+// UTC offset (ms) of the location's timezone at a given instant, DST included
+function offsetAt(ms) {
+  if (!tzFmt) return -new Date(ms).getTimezoneOffset() * 60000;
+  var parts = tzFmt.formatToParts(new Date(ms)), v = {};
+  for (var i = 0; i < parts.length; i++) v[parts[i].type] = parts[i].value;
+  return Date.UTC(+v.year, +v.month - 1, +v.day, (+v.hour) % 24, +v.minute, +v.second) - Math.floor(ms / 1000) * 1000;
+}
+// "wall clock" Date at the location: read it with getUTC* methods
+function wall(ms) { return new Date(ms + offsetAt(ms)); }
+// wall-clock time (given as a Date.UTC value) -> real instant
+function wallToUtc(wms) { var g = wms - offsetAt(wms); return wms - offsetAt(g); }
+function dayKey(w) { return w.getUTCFullYear() + "-" + w.getUTCMonth() + "-" + w.getUTCDate() + "|" + tz; }
 
 /* ---------- Sun position (NOAA-style approximation, accurate to ~1 min) ---------- */
 var RAD = Math.PI / 180;
@@ -210,10 +246,10 @@ var secHand  = makeHand(85, 16, 1.3, "#ff9f0a", 0.2);
 el("circle", { cx: 100, cy: 100, r: 3.4, fill: "#000", stroke: "#ff9f0a", "stroke-width": 2 });
 
 function animateHands() {
-  var d = new Date();
-  var s = d.getSeconds() + d.getMilliseconds() / 1000;
-  var mi = d.getMinutes() + s / 60;
-  var h = d.getHours() + mi / 60;
+  var d = new Date(Date.now() + tzOffMs);
+  var s = d.getUTCSeconds() + d.getUTCMilliseconds() / 1000;
+  var mi = d.getUTCMinutes() + s / 60;
+  var h = d.getUTCHours() + mi / 60;
   var ha = HOUR_HAND_24 ? h * 15 : (h % 12) * 30;
   hourHand.setAttribute("transform", "rotate(" + f(ha) + " 100 100)");
   minHand.setAttribute("transform", "rotate(" + f(mi * 6) + " 100 100)");
@@ -234,14 +270,30 @@ function pie(h0, h1, fill) {
 }
 
 function setupDay() {
-  var now = new Date(), y = now.getFullYear(), m = now.getMonth(), d = now.getDate();
-  day.key = y + "-" + m + "-" + d;
+  var w = wall(Date.now()), y = w.getUTCFullYear(), m = w.getUTCMonth(), d = w.getUTCDate();
+  day.key = dayKey(w);
 
-  var alts = [], above = 0, rise = null, set = null, i;
-  for (i = 0; i <= 1440; i++) {
-    var a = sunAlt(new Date(y, m, d, 0, i), loc.lat, loc.lon);
-    alts.push(a);
-    if (i < 1440 && a > HORIZON) above++;
+  // the location's local day: wall-clock midnight to midnight (23, 24 or 25 real hours around DST changes)
+  var base = Date.UTC(y, m, d, 0, 0), nextBase = base + 86400000;
+  var startMs = wallToUtc(base), endMs = wallToUtc(nextBase);
+  var offA = base - startMs, offB = nextBase - endMs, dstT = null;
+  if (offA !== offB) {                       // a DST change happens today: find the exact moment
+    var lo = startMs, hi = endMs;
+    while (hi - lo > 1000) {
+      var mid = Math.floor((lo + hi) / 2);
+      if (offsetAt(mid) === offA) lo = mid; else hi = mid;
+    }
+    dstT = hi;
+  }
+  var instantOf = function (n) {             // n = minutes of wall-clock time since local midnight
+    var g = base + n * 60000 - offA;
+    return (dstT !== null && g >= dstT) ? base + n * 60000 - offB : g;
+  };
+
+  var alts = [], above = 0, total = Math.round((endMs - startMs) / 60000), rise = null, set = null, i;
+  for (i = 0; i <= 1440; i++) alts.push(sunAlt(new Date(instantOf(i)), loc.lat, loc.lon));
+  for (i = 0; i < total; i++) {              // exact day length in real elapsed minutes
+    if (sunAlt(new Date(startMs + i * 60000), loc.lat, loc.lon) > HORIZON) above++;
   }
   for (i = 0; i < 1440; i++) {
     var a0 = alts[i], a1 = alts[i + 1];
@@ -309,7 +361,7 @@ function setupDay() {
   document.getElementById("daylen").textContent = "Day length: " + dh + "h " + (dm < 10 ? "0" : "") + dm + "m";
   var sunEl = document.getElementById("sun");
   if (above === 0) sunEl.textContent = "Polar night";
-  else if (above === 1440) sunEl.textContent = "Midnight sun";
+  else if (above === total) sunEl.textContent = "Midnight sun";
   else sunEl.textContent = (rise !== null ? "↑ " + hm(rise) : "") + (set !== null ? "   ↓ " + hm(set) : "");
 }
 function hm(h) {
@@ -348,7 +400,9 @@ function palette(alt) {
 /* ---------- Per-second update ---------- */
 function render() {
   var now = new Date();
-  if (now.getFullYear() + "-" + now.getMonth() + "-" + now.getDate() !== day.key) {
+  tzOffMs = offsetAt(now.getTime());         // re-read every second so DST switches are picked up
+  var lw = new Date(now.getTime() + tzOffMs);
+  if (dayKey(lw) !== day.key) {
     setupDay();      // new sunrise/sunset, zones, day length
     loadWeather();   // new day's rain forecast and high/low
   }
@@ -362,7 +416,7 @@ function render() {
   var lit = Math.max(0, Math.min(1, (alt + 18) / 24));
   wedgesG.setAttribute("opacity", f(0.42 + 0.43 * lit));
 
-  var hNow = now.getHours() + now.getMinutes() / 60 + now.getSeconds() / 3600;
+  var hNow = lw.getUTCHours() + lw.getUTCMinutes() / 60 + lw.getUTCSeconds() / 3600;
   var sp = pt(hNow, R_ORB);
   sunMark.setAttribute("cx", f(sp[0])); sunMark.setAttribute("cy", f(sp[1]));
   sunGlow.setAttribute("cx", f(sp[0])); sunGlow.setAttribute("cy", f(sp[1]));
@@ -400,7 +454,7 @@ var elTemp = document.getElementById("temp"), elIcon = document.getElementById("
 function setLocation(lat, lon) {
   var moved = Math.abs(lat - loc.lat) > 0.05 || Math.abs(lon - loc.lon) > 0.05;
   loc = { lat: lat, lon: lon };
-  try { localStorage.setItem("astro_loc", JSON.stringify([lat, lon])); } catch (e) {}
+  saveLoc();
   if (moved) { setupDay(); render(); }
 }
 
@@ -433,6 +487,7 @@ function loadWeather() {
       .then(function (r) { return r.json(); })
       .then(function (j) {
         var c = j.current, d = j.daily;
+        if (j.timezone && setTz(j.timezone)) { setupDay(); render(); }  // timezone of the location (DST-aware)
         var w = WMO[c.weather_code] || ["—", "", ""];
         elTemp.textContent = Math.round(c.temperature_2m) + "°";
         elIcon.textContent = c.is_day ? w[1] : w[2];
