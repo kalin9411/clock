@@ -45,14 +45,21 @@
     -webkit-flex-direction: column; flex-direction: column;
     -webkit-justify-content: center; justify-content: center;
   }
-  .temp { font-size: calc(var(--h) * 0.38); font-weight: 500; line-height: 0.95; letter-spacing: -0.02em; white-space: nowrap; }
+  .temp { cursor: pointer; -webkit-tap-highlight-color: transparent; font-size: calc(var(--h) * 0.38); font-weight: 500; line-height: 0.95; letter-spacing: -0.02em; white-space: nowrap; }
   .icon { font-size: calc(var(--h) * 0.085); line-height: 1; margin-top: calc(var(--h) * 0.03); }
-  .cond { font-size: calc(var(--h) * 0.075); font-weight: 500; margin-top: calc(var(--h) * 0.012); white-space: nowrap; }
+  .cond { font-size: calc(var(--h) * 0.07); font-weight: 500; line-height: 1.15; margin-top: calc(var(--h) * 0.012); }
   .hl   { font-size: calc(var(--h) * 0.075); font-weight: 500; margin-top: calc(var(--h) * 0.005); white-space: nowrap; }
   .sun, .phase { font-size: calc(var(--h) * 0.05); color: #8e8e93; white-space: nowrap; }
   .sun   { margin-top: calc(var(--h) * 0.03); }
   .rain  { font-size: calc(var(--h) * 0.05); color: #8e8e93; white-space: nowrap; margin-top: calc(var(--h) * 0.008); }
   .dot { display: inline-block; width: 0.7em; height: 0.7em; border-radius: 50%; margin-right: 0.45em; vertical-align: baseline; }
+  .bgctl {
+    display: none; position: fixed; right: 4vw; bottom: 5vh; width: 40vw; z-index: 10;
+    padding: calc(var(--h) * 0.035) 2.5vw; border-radius: calc(var(--h) * 0.05);
+    background: rgba(44,44,48,0.94); color: #fff; font-size: calc(var(--h) * 0.05);
+  }
+  .bgctl.show { display: block; }
+  .bgctl input { width: 100%; margin-top: calc(var(--h) * 0.025); accent-color: #ff9f0a; }
   .status { font-size: calc(var(--h) * 0.045); color: #8e8e93; margin-top: calc(var(--h) * 0.008); }
 </style>
 </head>
@@ -68,8 +75,12 @@
     <div class="cond" id="cond">Loading…</div>
     <div class="hl" id="hl"></div>
     <div class="sun" id="sun"></div>
-    <div class="rain" id="rain"></div>
   </div>
+</div>
+
+<div class="bgctl" id="bgctl">
+  <span id="bglabel">Background 100%</span>
+  <input id="bgrange" type="range" min="0" max="100" step="1" value="100">
 </div>
 
 <script>
@@ -166,7 +177,7 @@ function clear(g) { while (g.firstChild) g.removeChild(g.firstChild); }
 var FONT = "-apple-system, 'SF Pro Display', 'Helvetica Neue', Arial, sans-serif";
 
 /* Dial geometry (viewBox 200 x 200).  12h at top, 24h at bottom, 06h left, 18h right. */
-var R_DISC = 89, R_NUM = 72, R_ORB = 56;
+var R_DISC = 89, R_NUM = 75, R_ORB = 56;
 function pt(h, r) {
   var a = (h - 12) * 15 * RAD;
   return [100 + r * Math.sin(a), 100 - r * Math.cos(a)];
@@ -188,25 +199,29 @@ var sTop = el("stop", { offset: "0" },    skyG);
 var sMid = el("stop", { offset: "0.55" }, skyG);
 var sHor = el("stop", { offset: "1" },    skyG);
 
-// classic watch ticks: 12 white hour ticks, 48 grey minute ticks
+// classic watch ticks: all the same length; 12 white hour ticks, 48 grey minute ticks
 var ticksG = el("g", {});
 for (var tk = 0; tk < 60; tk++) {
   var hourTick = tk % 5 === 0;
-  el("line", { x1: 100, y1: 100 - 98, x2: 100, y2: 100 - (hourTick ? 90 : 93),
-               stroke: hourTick ? "#fff" : "#8e8e93", "stroke-width": hourTick ? 2.6 : 2.1,
+  el("line", { x1: 100, y1: 100 - 98, x2: 100, y2: 100 - 90,
+               stroke: hourTick ? "#fff" : "#8e8e93", "stroke-width": 1.7,
                transform: "rotate(" + (tk * 6) + " 100 100)" }, ticksG);
 }
 
+var bgG     = el("g", {});                        // whole day/night background (opacity slider)
 var clipG   = el("g", { "clip-path": "url(#clipDisc)" });
 var skyRect = el("rect", { x: 0, y: 0, width: 200, height: 200, fill: "url(#skyG)" }, clipG);
 var starsG  = el("g", {}, clipG);
 var wedgesG = el("g", {}, clipG);                 // twilight/night pies, centre to rim
 
 // sun orbit + sun marker
-el("circle", { cx: 100, cy: 100, r: R_ORB, fill: "none", stroke: "#fff", "stroke-opacity": 0.45, "stroke-width": 0.8 });
+var orbitRing = el("circle", { cx: 100, cy: 100, r: R_ORB, fill: "none", stroke: "#fff", "stroke-opacity": 0.45, "stroke-width": 0.8 });
 var orbDots = el("g", {});
 var sunGlow = el("circle", { r: 15, fill: "url(#sunG)" });
 var sunMark = el("circle", { r: 3.2, fill: "#fffbe0" });
+
+bgG.appendChild(clipG); bgG.appendChild(orbitRing); bgG.appendChild(orbDots);
+bgG.appendChild(sunGlow); bgG.appendChild(sunMark);
 
 // classic 1-12 numerals (drawn above the sun layer)
 var labG = el("g", {});
@@ -214,9 +229,9 @@ for (var n = 1; n <= 12; n++) {
   var na = n * 30 * RAD;
   var tx = el("text", {
     x: f(100 + R_NUM * Math.sin(na)), y: f(100 - R_NUM * Math.cos(na) + 0.6),
-    fill: "#fff", "fill-opacity": 0.8,
-    "font-size": 19, "font-weight": 400, "text-anchor": "middle",
-    "dominant-baseline": "central", "font-family": FONT
+    fill: "#fff",
+    "font-size": 23, "font-weight": 400, "text-anchor": "middle",
+    "dominant-baseline": "central", "font-family": "system-ui, -apple-system, 'Helvetica Neue', Arial, sans-serif"
   }, labG);
   tx.textContent = n;
 }
@@ -230,8 +245,8 @@ function makeHand(len, tail, w, color, shadow) {
                "stroke-width": w, "stroke-linecap": "round" }, g);
   return g;
 }
-var hourHand = makeHand(54, 10, 6.6, "#fff", 0.35);
-var minHand  = makeHand(86, 10, 5.4, "#fff", 0.35);
+var hourHand = makeHand(54, 10, 5.6, "#fff", 0.35);
+var minHand  = makeHand(86, 10, 5.6, "#fff", 0.35);
 var secHand  = makeHand(90, 18, 1.4, "#ff9f0a", 0.25);
 el("circle", { cx: 100, cy: 100, r: 6, fill: "#fff" });
 el("circle", { cx: 100, cy: 100, r: 3.2, fill: "#000", stroke: "#ff9f0a", "stroke-width": 1.8 });
@@ -248,6 +263,31 @@ function animateHands() {
   (window.requestAnimationFrame || function (fn) { setTimeout(fn, 33); })(animateHands);
 }
 animateHands();
+
+/* ---------- Background opacity slider (tap the temperature to show/hide) ---------- */
+var bgVal = 100;
+try { var sv = localStorage.getItem("astro_bg"); if (sv !== null && !isNaN(+sv)) bgVal = Math.max(0, Math.min(100, +sv)); } catch (e) {}
+var bgRange = document.getElementById("bgrange"), bgLabel = document.getElementById("bglabel"),
+    bgCtl = document.getElementById("bgctl"), bgTimer = null;
+function applyBg() {
+  bgG.setAttribute("opacity", bgVal / 100);
+  bgLabel.textContent = "Background " + Math.round(bgVal) + "%";
+  bgRange.value = bgVal;
+}
+function showCtl(on) {
+  bgCtl.className = on ? "bgctl show" : "bgctl";
+  clearTimeout(bgTimer);
+  if (on) bgTimer = setTimeout(function () { showCtl(false); }, 6000);   // auto-hide after 6 s idle
+}
+bgRange.addEventListener("input", function () {
+  bgVal = +bgRange.value; applyBg();
+  try { localStorage.setItem("astro_bg", String(bgVal)); } catch (e) {}
+  showCtl(true);
+});
+document.getElementById("temp").addEventListener("click", function () {
+  showCtl(bgCtl.className.indexOf("show") < 0);
+});
+applyBg();
 
 /* ---------- Day computation (zones, sunrise/sunset, horizon tilt) ---------- */
 var day = { key: "", above: 0, rise: null, set: null };
@@ -440,7 +480,11 @@ var WMO = {
 };
 var elTemp = document.getElementById("temp"), elIcon = document.getElementById("icon"),
     elCond = document.getElementById("cond"), elHL = document.getElementById("hl"),
-    elRain = document.getElementById("rain");
+    condText = "", rainText = "";
+function updateCond() {
+  // non-breaking spaces keep "- Rain 35% at 17:00" together if the line has to wrap
+  elCond.textContent = condText + (rainText ? "\u00a0- " + rainText.replace(/ /g, "\u00a0") : "");
+}
 
 function setLocation(lat, lon) {
   var moved = Math.abs(lat - loc.lat) > 0.05 || Math.abs(lon - loc.lon) > 0.05;
@@ -482,18 +526,20 @@ function loadWeather() {
         var w = WMO[c.weather_code] || ["—", "", ""];
         elTemp.textContent = Math.round(c.temperature_2m) + "°";
         elIcon.textContent = c.is_day ? w[1] : w[2];
-        elCond.textContent = w[0];
+        condText = w[0];
         elHL.textContent = "H:" + Math.round(d.temperature_2m_max[0]) + "°  L:" + Math.round(d.temperature_2m_min[0]) + "°";
         var pr = j.hourly && j.hourly.precipitation_probability;
+        rainText = "";
         if (pr) {
           var ch = parseInt(c.time.substr(11, 2), 10), best = -1, bestH = 0;
           for (var hr = ch; hr < pr.length && hr < 24; hr++) {
             if (pr[hr] != null && pr[hr] > best) { best = pr[hr]; bestH = hr; }
           }
-          elRain.textContent = best >= RAIN_MIN
+          rainText = best >= RAIN_MIN
             ? "Rain " + Math.round(best) + "% at " + (bestH < 10 ? "0" : "") + bestH + ":00"
             : "No rain";
         }
+        updateCond();
       })
       .catch(function () {});
   });
